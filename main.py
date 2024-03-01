@@ -66,7 +66,7 @@ class Turbine:
         self.rootradius_R = rootradius_R
         
 class BemSimulation: 
-    def __init__(self, turbine: Turbine, uinf: float, tsr: float, r_Rs: np.ndarray, n_iterations = 100, iteration_error = 0.00001, glauert_correction = True):
+    def __init__(self, turbine: Turbine, uinf: float, tsr: float, r_Rs: np.ndarray, n_iterations = 100, iteration_error = 0.00001, tip_correction = True):
         self.turbine = turbine
         self.blade = self.turbine.turbine_blade
         self.airfoil = self.blade.blade_airfoil
@@ -74,7 +74,7 @@ class BemSimulation:
         self.tsr = tsr 
         self.omega = uinf*tsr/self.turbine.radius
         self.r_Rs = r_Rs 
-        self.glauert = glauert_correction 
+        self.corr_tip = tip_correction
         self.n_iter = n_iterations
         self.iter_error = iteration_error
         
@@ -128,15 +128,20 @@ class BemSimulation:
             
             CT: float = load_3d_axial/(0.5*area*self.uinf**2)
             anew: float = self.calc_axial_induction(CT)
-            prandtl, prandtltip, prandtlroot = self._prandtl_tip_root_correction(r_R, anew)
-            if prandtl < prandtl_min:
-                prandtl = prandtl_min
-                
-            anew: float = anew/prandtl
+            
+            if self.corr_tip:
+                prandtl, prandtltip, prandtlroot = self._prandtl_tip_root_correction(r_R, anew)
+                if prandtl < prandtl_min:
+                    prandtl = prandtl_min
+                    
+                anew: float = anew/prandtl
             a: float = 0.75*a+0.25*anew
             
             aline: float = ftan*self.turbine.B/(2*np.pi*self.uinf*(1-a)*self.omega*2*(r_R*self.turbine.radius)**2)
-            aline: float = aline/prandtl
+            
+            if self.corr_tip:
+                aline: float = aline/prandtl
+
             
             if np.abs(a-anew) < self.iter_error:
                 break
@@ -184,3 +189,12 @@ if __name__ == "__main__":
     
     print("CT is ", CT)
     print("CP is ", CP)
+    
+    fig1 = plt.figure(figsize=(12, 6))
+    plt.title('Axial and tangential induction')
+    plt.plot(results[:,2], results[:,0], 'r-', label=r'$a$')
+    plt.plot(results[:,2], results[:,1], 'g--', label=r'$a^,$')
+    plt.grid()
+    plt.xlabel('r/R')
+    plt.legend()
+    plt.show()
