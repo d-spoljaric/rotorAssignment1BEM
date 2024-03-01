@@ -3,7 +3,6 @@ from typing import Any, Tuple
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import Callable
 
 
 class Airfoil:
@@ -92,7 +91,7 @@ class BemSimulation:
         chord: float = self.blade.get_chord(self.r_Rs, r_R)
         vmag2: float = vnorm**2 + vtan**2
         inflowangle: float = np.arctan2(vnorm, vtan)
-        alpha: float = self.blade.twist + np.degrees(inflowangle) 
+        alpha: float = self.blade.get_twist(self.r_Rs, r_R) + np.degrees(inflowangle) 
         cl: float = self.airfoil.calc_cl(alpha)
         cd: float = self.airfoil.calc_cd(alpha) 
         lift: float = 0.5*vmag2*cl*chord
@@ -112,7 +111,7 @@ class BemSimulation:
         Froot[np.isnan(Froot)] = 0
         return Froot*Ftip, Ftip, Froot
     
-    def solve_streamtube(self, r1_R: float, r2_R: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def _solve_streamtube(self, r1_R: float, r2_R: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         area: float = np.pi*((r2_R*self.turbine.radius)**2-(r1_R*self.turbine.radius)**2)
         r_R: float = (r1_R + r2_R)/2
         
@@ -124,28 +123,35 @@ class BemSimulation:
         for i in range(self.n_iter):
             urotor: float = self.uinf*(1-a)
             utan: float = (1+aline)*self.omega*r_R*self.turbine.radius
-            
-            fnorm, ftan, gamma = self._load_blade_element(urotor, utan, r_R) 
+            fnorm, ftan, gamma = self._load_blade_element(urotor, utan, r_R)
             load_3d_axial: float = fnorm*self.turbine.radius*(r2_R-r1_R)*self.turbine.B
             
-            CT = load_3d_axial/(0.5*area*self.uinf**2)
-            anew = self.calc_axial_induction(CT)
+            CT: float = load_3d_axial/(0.5*area*self.uinf**2)
+            anew: float = self.calc_axial_induction(CT)
             prandtl, prandtltip, prandtlroot = self._prandtl_tip_root_correction(r_R, anew)
             if prandtl < prandtl_min:
                 prandtl = prandtl_min
                 
-            anew = anew/prandtl
-            a = 0.75*a+0.25*anew
+            anew: float = anew/prandtl
+            a: float = 0.75*a+0.25*anew
             
-            aline = ftan*self.turbine.B/(2*np.pi*self.uinf*(1-a)*self.omega*2*(r_R*self.turbine.radius)**2)
-            aline = aline/prandtl
+            aline: float = ftan*self.turbine.B/(2*np.pi*self.uinf*(1-a)*self.omega*2*(r_R*self.turbine.radius)**2)
+            aline: float = aline/prandtl
             
             if np.abs(a-anew) < self.iter_error:
                 break
             
             return [a, aline, r_R, fnorm, ftan, gamma]
+    
+    def simulate(self) -> np.ndarray:
+        results: np.ndarray = np.zeros([len(self.r_Rs)-1, 6])
+        
+        for i in range(len(self.r_Rs)-1):
+            results[i, :] = self._solve_streamtube(self.r_Rs[i], self.r_Rs[i+1])
             
-            
+        return results
+    
+
 if __name__ == "__main__":
     delta_r_R = 0.01
     TipLocation_R =  1
@@ -160,14 +166,21 @@ if __name__ == "__main__":
     TSR = 8
     Radius = 50
     Nblades = 3
+    
+    omega = Uinf*TSR/Radius
      
     airfoil = Airfoil("DU95W180.dat")
     blade = Blade(airfoil, twist_dist, chord_dist)
     turbine = Turbine(blade, Nblades, Radius, TipLocation_R, RootLocation_R)
     sim = BemSimulation(turbine, Uinf, TSR, r_R)
     
+    results: np.ndarray = sim.simulate()
+   
+    areas = (r_R[1:]**2-r_R[:-1]**2)*np.pi*Radius**2
+
+    dr = (r_R[1:]-r_R[:-1])*Radius
+    CT = np.sum(dr*results[:,3]*Nblades/(0.5*Uinf**2*np.pi*Radius**2))
+    CP = np.sum(dr*results[:,4]*results[:,2]*Nblades*Radius*omega/(0.5*Uinf**3*np.pi*Radius**2))
     
-    results = np.zeros([len(r_R)-1, 6])
-    
-    for i in range(len(r_R) - 1):
-        results[i:, ] = sim.solve_streamtube(r_R[i], r_R[i+1])
+    print("CT is ", CT)
+    print("CP is ", CP)
