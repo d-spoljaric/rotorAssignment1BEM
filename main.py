@@ -53,49 +53,53 @@ class Blade:
        return np.interp(r_R, r_R_range, self.chord)
    
     def get_twist(self, r_R_range: np.ndarray, r_R: float | np.ndarray) -> float | np.ndarray:
-       return np.interp(r_R, r_R_range, self.chord)
-   
+       return np.interp(r_R, r_R_range, self.twist)
 
 
 class Turbine:
-    def __init__(self, turbine_blade: Blade, NBlades: int, radius: float, tipradius_R: float, rootradius_R: float):
+    def __init__(self, turbine_blade: Blade, NBlades: int, pitch: float, radius: float, tipradius_R: float, rootradius_R: float):
         self.turbine_blade = turbine_blade
         self.B = NBlades
+        self.pitch = pitch
         self.radius = radius
         self.tipradius_R = tipradius_R
         self.rootradius_R = rootradius_R
-        
+            
 class BemSimulation: 
-    def __init__(self, turbine: Turbine, uinf: float, tsr: float, r_Rs: np.ndarray, n_iterations = 100, iteration_error = 0.00001, tip_correction = True):
+    def __init__(self, turbine: Turbine, uinf: float, tsr: float, r_Rs: np.ndarray, rho: float, tip_correction = True, glauert_correction = True, n_iterations = 100, iteration_error = 0.00001):
         self.turbine = turbine
         self.blade = self.turbine.turbine_blade
         self.airfoil = self.blade.blade_airfoil
         self.uinf = uinf
         self.tsr = tsr 
         self.omega = uinf*tsr/self.turbine.radius
-        self.r_Rs = r_Rs 
-        self.corr_tip = tip_correction
+        self.r_Rs = r_Rs
+        self.rho = rho
+        self.tip_corr = tip_correction
+        self.glauert_corr = glauert_correction
         self.n_iter = n_iterations
         self.iter_error = iteration_error
         
     def calc_axial_induction(self, CT: np.ndarray) -> np.ndarray:
         a: np.ndarray = np.zeros(shape = np.shape(CT))
-        CT1: float = 1.816
-        CT2: float = 2*np.sqrt(CT1) - CT1
-        a[CT>=CT2] = 1 + (CT[CT>=CT2]-CT1)/(4*(np.sqrt(CT1)-1)) 
-        a[CT<=CT2] = 0.5-0.5*np.sqrt(1-CT[CT<CT2]) 
-
+        if self.glauert_corr:
+            CT1: float = 1.816
+            CT2: float = 2*np.sqrt(CT1) - CT1
+            a[CT>=CT2] = 1 + (CT[CT>=CT2]-CT1)/(4*(np.sqrt(CT1)-1)) 
+            a[CT<=CT2] = 0.5-0.5*np.sqrt(1-CT[CT<CT2])
+        else:
+            a = 0.5*(1-np.sqrt(1-CT))
         return a
 
-    def _load_blade_element(self, vnorm: float, vtan: float, r_R: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _load_blade_element(self, vnorm: float | np.ndarray, vtan: float | np.ndarray, r_R: float | np.ndarray) -> Tuple[float, float, float] | Tuple[np.ndarray, np.ndarray, np.ndarray]:
         chord: float = self.blade.get_chord(self.r_Rs, r_R)
         vmag2: float = vnorm**2 + vtan**2
         inflowangle: float = np.arctan2(vnorm, vtan)
-        alpha: float = self.blade.get_twist(self.r_Rs, r_R) + np.degrees(inflowangle) 
+        alpha: float = self.blade.get_twist(self.r_Rs, r_R) + self.turbine.pitch + np.degrees(inflowangle) 
         cl: float = self.airfoil.calc_cl(alpha)
         cd: float = self.airfoil.calc_cd(alpha) 
-        lift: float = 0.5*vmag2*cl*chord
-        drag: float = 0.5*vmag2*cd*chord
+        lift: float = 0.5*self.rho*vmag2*cl*chord
+        drag: float = 0.5*self.rho*vmag2*cd*chord
         fnorm: float = lift*np.cos(inflowangle) + drag*np.sin(inflowangle)
         ftan: float = lift*np.sin(inflowangle) - drag*np.cos(inflowangle)
         gamma: float = 0.5*np.sqrt(vmag2)*cl*chord
@@ -109,6 +113,7 @@ class BemSimulation:
         temp1 = self.turbine.B/2*(self.turbine.rootradius_R-r_R)/r_R*np.sqrt( 1+ ((self.tsr*r_R)**2)/((1-ax_ind)**2))
         Froot = np.array(2/np.pi*np.arccos(np.exp(temp1)))
         Froot[np.isnan(Froot)] = 0
+        
         return Froot*Ftip, Ftip, Froot
     
     def _solve_streamtube(self, r1_R: float, r2_R: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -116,20 +121,23 @@ class BemSimulation:
         r_R: float = (r1_R + r2_R)/2
         
         a: float = 0.0
-        aline: float = 0.0
+        aprime: float = 0.0
         
         prandtl_min = 0.0001
         
-        for i in range(self.n_iter):
+        solving: bool = True
+        
+        iterations: int = 0
+        while solving:
             urotor: float = self.uinf*(1-a)
-            utan: float = (1+aline)*self.omega*r_R*self.turbine.radius
+            utan: float = (1+aprime)*self.omega*r_R*self.turbine.radius
             fnorm, ftan, gamma = self._load_blade_element(urotor, utan, r_R)
-            load_3d_axial: float = fnorm*self.turbine.radius*(r2_R-r1_R)*self.turbine.B
+            load_axial: float = fnorm*self.turbine.radius*(r2_R-r1_R)*self.turbine.B
             
-            CT: float = load_3d_axial/(0.5*area*self.uinf**2)
+            CT: float = load_axial/(0.5*area*self.uinf**2)
             anew: float = self.calc_axial_induction(CT)
             
-            if self.corr_tip:
+            if self.tip_corr:
                 prandtl, prandtltip, prandtlroot = self._prandtl_tip_root_correction(r_R, anew)
                 if prandtl < prandtl_min:
                     prandtl = prandtl_min
@@ -137,16 +145,15 @@ class BemSimulation:
                 anew: float = anew/prandtl
             a: float = 0.75*a+0.25*anew
             
-            aline: float = ftan*self.turbine.B/(2*np.pi*self.uinf*(1-a)*self.omega*2*(r_R*self.turbine.radius)**2)
+            aprime: float = ftan*self.turbine.B/(2*np.pi*self.uinf*(1-a)*self.omega*2*(r_R*self.turbine.radius)**2)
             
-            if self.corr_tip:
-                aline: float = aline/prandtl
-
+            if self.tip_corr:
+                aprime: float = aprime/prandtl
             
-            if np.abs(a-anew) < self.iter_error:
-                break
+            if (np.abs(a-anew) < self.iter_error) or (iterations==self.n_iter):
+                return [a, aprime, r_R, fnorm, ftan, gamma]
             
-            return [a, aline, r_R, fnorm, ftan, gamma]
+            iterations += 1
     
     def simulate(self) -> np.ndarray:
         results: np.ndarray = np.zeros([len(self.r_Rs)-1, 6])
@@ -165,7 +172,7 @@ if __name__ == "__main__":
     
     pitch = 2
     chord_dist = 3*(1-r_R)+1
-    twist_dist = -14*(1-r_R)+pitch
+    twist_dist = -14*(1-r_R)
     
     Uinf = 1
     TSR = 8
@@ -176,8 +183,8 @@ if __name__ == "__main__":
      
     airfoil = Airfoil("DU95W180.dat")
     blade = Blade(airfoil, twist_dist, chord_dist)
-    turbine = Turbine(blade, Nblades, Radius, TipLocation_R, RootLocation_R)
-    sim = BemSimulation(turbine, Uinf, TSR, r_R)
+    turbine = Turbine(blade, Nblades, pitch, Radius, TipLocation_R, RootLocation_R)
+    sim = BemSimulation(turbine, Uinf, TSR, r_R, 1, True, True)
     
     results: np.ndarray = sim.simulate()
    
