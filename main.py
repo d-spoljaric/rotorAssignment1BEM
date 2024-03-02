@@ -119,7 +119,7 @@ class BemSimulation:
         a: float = 0.0
         aprime: float = 0.0
         
-        prandtl_min = 0.0001
+        prandtl_min: float = 0.0001
         
         solving: bool = True
         
@@ -137,19 +137,20 @@ class BemSimulation:
                 prandtl, prandtltip, prandtlroot = self._prandtl_tip_root_correction(r_R, anew)
                 if prandtl < prandtl_min:
                     prandtl = prandtl_min
-                    
                 anew: float = anew/prandtl
+                
             a: float = 0.75*a+0.25*anew
             
             aprime: float = ftan*self.turbine.B/(2*np.pi*self.uinf*(1-a)*self.omega*2*(r_R*self.turbine.radius)**2)
             
             if self.tip_corr:
                 aprime: float = aprime/prandtl
+                
+            iterations += 1
             
             if (np.abs(a-anew) < self.iter_error) or (iterations==self.n_iter):
                 return [a, aprime, r_R, fnorm, ftan, gamma]
-            
-            iterations += 1
+
     
     def simulate(self) -> np.ndarray:
         for i in range(len(self.turbine.r_Rs)-1):
