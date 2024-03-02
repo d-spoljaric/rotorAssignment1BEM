@@ -1,4 +1,4 @@
-from typing import Any, Tuple
+from typing import Any, Tuple, Callable
 
 import numpy as np
 import pandas as pd
@@ -44,41 +44,37 @@ class Airfoil:
 
 
 class Blade:
-    def __init__(self, blade_airfoil: Airfoil, twist: np.ndarray, chord: np.ndarray):
+    def __init__(self, blade_airfoil: Airfoil, twist: Callable[[np.ndarray | float], np.ndarray | float], chord: Callable[[np.ndarray | float], np.ndarray | float]):
         self.blade_airfoil = blade_airfoil
         self.twist = twist
         self.chord = chord
-    
-    def get_chord(self, r_R_range: np.ndarray, r_R: float | np.ndarray) -> float | np.ndarray:
-       return np.interp(r_R, r_R_range, self.chord)
-   
-    def get_twist(self, r_R_range: np.ndarray, r_R: float | np.ndarray) -> float | np.ndarray:
-       return np.interp(r_R, r_R_range, self.twist)
 
 
 class Turbine:
-    def __init__(self, turbine_blade: Blade, NBlades: int, pitch: float, radius: float, tipradius_R: float, rootradius_R: float):
+    def __init__(self, turbine_blade: Blade, NBlades: int, pitch: float, radius: float, tipradius_R: float, rootradius_R: float, delta_r_R: float):
         self.turbine_blade = turbine_blade
         self.B = NBlades
         self.pitch = pitch
         self.radius = radius
         self.tipradius_R = tipradius_R
         self.rootradius_R = rootradius_R
+        self.dr = delta_r_R
+        self.r_Rs = np.arange(RootLocation_R, TipLocation_R+delta_r_R/2, delta_r_R)
             
 class BemSimulation: 
-    def __init__(self, turbine: Turbine, uinf: float, tsr: float, r_Rs: np.ndarray, rho: float, tip_correction = True, glauert_correction = True, n_iterations = 100, iteration_error = 0.00001):
+    def __init__(self, turbine: Turbine, uinf: float, tsr: float, rho: float, tip_correction = True, glauert_correction = True, n_iterations = 100, iteration_error = 0.00001):
         self.turbine = turbine
         self.blade = self.turbine.turbine_blade
         self.airfoil = self.blade.blade_airfoil
         self.uinf = uinf
         self.tsr = tsr 
         self.omega = uinf*tsr/self.turbine.radius
-        self.r_Rs = r_Rs
         self.rho = rho
         self.tip_corr = tip_correction
         self.glauert_corr = glauert_correction
         self.n_iter = n_iterations
         self.iter_error = iteration_error
+        self.results: np.ndarray = np.zeros([len(self.turbine.r_Rs)-1, 6])
         
     def calc_axial_induction(self, CT: np.ndarray) -> np.ndarray:
         a: np.ndarray = np.zeros(shape = np.shape(CT))
@@ -92,10 +88,10 @@ class BemSimulation:
         return a
 
     def _load_blade_element(self, vnorm: float | np.ndarray, vtan: float | np.ndarray, r_R: float | np.ndarray) -> Tuple[float, float, float] | Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        chord: float = self.blade.get_chord(self.r_Rs, r_R)
+        chord: float = self.blade.chord(r_R)
         vmag2: float = vnorm**2 + vtan**2
         inflowangle: float = np.arctan2(vnorm, vtan)
-        alpha: float = self.blade.get_twist(self.r_Rs, r_R) + self.turbine.pitch + np.degrees(inflowangle) 
+        alpha: float = self.blade.twist(r_R) + self.turbine.pitch + np.degrees(inflowangle) 
         cl: float = self.airfoil.calc_cl(alpha)
         cd: float = self.airfoil.calc_cd(alpha) 
         lift: float = 0.5*self.rho*vmag2*cl*chord
@@ -156,23 +152,25 @@ class BemSimulation:
             iterations += 1
     
     def simulate(self) -> np.ndarray:
-        results: np.ndarray = np.zeros([len(self.r_Rs)-1, 6])
-        
-        for i in range(len(self.r_Rs)-1):
-            results[i, :] = self._solve_streamtube(self.r_Rs[i], self.r_Rs[i+1])
+        for i in range(len(self.turbine.r_Rs)-1):
+            self.results[i, :] = self._solve_streamtube(self.turbine.r_Rs[i], self.turbine.r_Rs[i+1])
             
-        return results
+        return self.results
+    
     
 
 if __name__ == "__main__":
     delta_r_R = 0.01
     TipLocation_R =  1
     RootLocation_R =  0.2
-    r_R = np.arange(RootLocation_R, TipLocation_R+delta_r_R/2, delta_r_R)
     
     pitch = 2
-    chord_dist = 3*(1-r_R)+1
-    twist_dist = -14*(1-r_R)
+    
+    def chord_dist(x):
+        return 3*(1-x)+1
+    
+    def twist_dist(x):
+        return -14*(1-x)
     
     Uinf = 1
     TSR = 8
@@ -183,25 +181,25 @@ if __name__ == "__main__":
      
     airfoil = Airfoil("DU95W180.dat")
     blade = Blade(airfoil, twist_dist, chord_dist)
-    turbine = Turbine(blade, Nblades, pitch, Radius, TipLocation_R, RootLocation_R)
-    sim = BemSimulation(turbine, Uinf, TSR, r_R, 1, True, True)
+    turbine = Turbine(blade, Nblades, pitch, Radius, TipLocation_R, RootLocation_R, 0.01)
+    sim = BemSimulation(turbine, Uinf, TSR, 1, True, True)
     
     results: np.ndarray = sim.simulate()
    
-    areas = (r_R[1:]**2-r_R[:-1]**2)*np.pi*Radius**2
+    # areas = (r_R[1:]**2-r_R[:-1]**2)*np.pi*Radius**2
 
-    dr = (r_R[1:]-r_R[:-1])*Radius
-    CT = np.sum(dr*results[:,3]*Nblades/(0.5*Uinf**2*np.pi*Radius**2))
-    CP = np.sum(dr*results[:,4]*results[:,2]*Nblades*Radius*omega/(0.5*Uinf**3*np.pi*Radius**2))
+    # dr = (r_R[1:]-r_R[:-1])*Radius
+    # CT = np.sum(dr*results[:,3]*Nblades/(0.5*Uinf**2*np.pi*Radius**2))
+    # CP = np.sum(dr*results[:,4]*results[:,2]*Nblades*Radius*omega/(0.5*Uinf**3*np.pi*Radius**2))
     
-    print("CT is ", CT)
-    print("CP is ", CP)
+    # print("CT is ", CT)
+    # print("CP is ", CP)
     
-    fig1 = plt.figure(figsize=(12, 6))
-    plt.title('Axial and tangential induction')
-    plt.plot(results[:,2], results[:,0], 'r-', label=r'$a$')
-    plt.plot(results[:,2], results[:,1], 'g--', label=r'$a^,$')
-    plt.grid()
-    plt.xlabel('r/R')
-    plt.legend()
-    plt.show()
+    # fig1 = plt.figure(figsize=(12, 6))
+    # plt.title('Axial and tangential induction')
+    # plt.plot(results[:,2], results[:,0], 'r-', label=r'$a$')
+    # plt.plot(results[:,2], results[:,1], 'g--', label=r'$a^,$')
+    # plt.grid()
+    # plt.xlabel('r/R')
+    # plt.legend()
+    # plt.show()
