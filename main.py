@@ -90,14 +90,14 @@ class BemSimulation:
     def _load_blade_element(self, vnorm: float | np.ndarray, vtan: float | np.ndarray, r_R: float | np.ndarray) -> Tuple[float, float, float] | Tuple[np.ndarray, np.ndarray, np.ndarray]:
         chord: float = self.blade.chord(r_R)
         vmag2: float = vnorm**2 + vtan**2
-        inflowangle: float = np.arctan2(vnorm, vtan)
-        alpha: float = self.blade.twist(r_R) + self.turbine.pitch + np.degrees(inflowangle) 
+        phi : float = np.arctan2(vnorm, vtan)
+        alpha: float = self.blade.twist(r_R) + self.turbine.pitch + np.degrees(phi)
         cl: float = self.airfoil.calc_cl(alpha)
         cd: float = self.airfoil.calc_cd(alpha) 
         lift: float = 0.5*self.rho*vmag2*cl*chord
         drag: float = 0.5*self.rho*vmag2*cd*chord
-        fnorm: float = lift*np.cos(inflowangle) + drag*np.sin(inflowangle)
-        ftan: float = lift*np.sin(inflowangle) - drag*np.cos(inflowangle)
+        fnorm: float = lift*np.cos(phi) + drag*np.sin(phi)
+        ftan: float = lift*np.sin(phi) - drag*np.cos(phi)
         gamma: float = 0.5*np.sqrt(vmag2)*cl*chord
         
         return fnorm, ftan, gamma
