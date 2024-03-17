@@ -1,33 +1,36 @@
 # import necessary libraries
 import matplotlib.pyplot as plt
-import numpy as np  
+import numpy as np
+from tqdm import tqdm
 
-def CTfunction(a, glauert = False):
+
+def CTfunction(a, glauert=False):
     """
     This function calculates the thrust coefficient as a function of induction factor 'a'
     'glauert' defines if the Glauert correction for heavily loaded rotors should be used; default value is false
     """
     CT = np.zeros(np.shape(a))
-    CT = 4*a*(1-a)  
+    CT = 4 * a * (1 - a)
     if glauert:
-        CT1=1.816;
-        a1=1-np.sqrt(CT1)/2;
-        CT[a>a1] = CT1-4*(np.sqrt(CT1)-1)*(1-a[a>a1])
-    
+        CT1 = 1.816
+        a1 = 1 - np.sqrt(CT1) / 2
+        CT[a > a1] = CT1 - 4 * (np.sqrt(CT1) - 1) * (1 - a[a > a1])
+
     return CT
 
-    
+
 def ainduction(CT):
     """
-    This function calculates the induction factor 'a' as a function of thrust coefficient CT 
+    This function calculates the induction factor 'a' as a function of thrust coefficient CT
     including Glauert's correction
     """
     a = np.zeros(np.shape(CT))
-    CT1=1.816;
-    CT2=2*np.sqrt(CT1)-CT1
-    a[CT>=CT2] = 1 + (CT[CT>=CT2]-CT1)/(4*(np.sqrt(CT1)-1))
-    a[CT<CT2] = 0.5-0.5*np.sqrt(1-CT[CT<CT2])
+    CT1 = 1.816
+    CT2 = 2 * np.sqrt(CT1) - CT1
+    a[CT >= CT2] = 1 + (CT[CT >= CT2] - CT1) / (4 * (np.sqrt(CT1) - 1))
+    a[CT < CT2] = 0.5 - 0.5 * np.sqrt(1 - CT[CT < CT2])
     return a
+
 
 # plot CT as a function of induction "a", with and without Glauert correction
 # define a as a range
@@ -47,18 +50,32 @@ def ainduction(CT):
 # plt.show()
 
 
-def PrandtlTipRootCorrection(r_R, rootradius_R, tipradius_R, TSR, NBlades, axial_induction):
+def PrandtlTipRootCorrection(
+    r_R, rootradius_R, tipradius_R, TSR, NBlades, axial_induction
+):
     """
-    This function calcualte steh combined tip and root Prandtl correction at agiven radial position 'r_R' (non-dimensioned by rotor radius), 
+    This function calcualte steh combined tip and root Prandtl correction at agiven radial position 'r_R' (non-dimensioned by rotor radius),
     given a root and tip radius (also non-dimensioned), a tip speed ratio TSR, the number lf blades NBlades and the axial induction factor
     """
-    temp1 = -NBlades/2*(tipradius_R-r_R)/r_R*np.sqrt( 1+ ((TSR*r_R)**2)/((1-axial_induction)**2))
-    Ftip = np.array(2/np.pi*np.arccos(np.exp(temp1)))
+    temp1 = (
+        -NBlades
+        / 2
+        * (tipradius_R - r_R)
+        / r_R
+        * np.sqrt(1 + ((TSR * r_R) ** 2) / ((1 - axial_induction) ** 2))
+    )
+    Ftip = np.array(2 / np.pi * np.arccos(np.exp(temp1)))
     Ftip[np.isnan(Ftip)] = 0
-    temp1 = NBlades/2*(rootradius_R-r_R)/r_R*np.sqrt( 1+ ((TSR*r_R)**2)/((1-axial_induction)**2))
-    Froot = np.array(2/np.pi*np.arccos(np.exp(temp1)))
+    temp1 = (
+        NBlades
+        / 2
+        * (rootradius_R - r_R)
+        / r_R
+        * np.sqrt(1 + ((TSR * r_R) ** 2) / ((1 - axial_induction) ** 2))
+    )
+    Froot = np.array(2 / np.pi * np.arccos(np.exp(temp1)))
     Froot[np.isnan(Froot)] = 0
-    return Froot*Ftip, Ftip, Froot
+    return Froot * Ftip, Ftip, Froot
 
 
 # plot Prandtl tip, root and combined correction for a number of blades and induction 'a', over the non-dimensioned radius
@@ -79,12 +96,11 @@ def PrandtlTipRootCorrection(r_R, rootradius_R, tipradius_R, TSR, NBlades, axial
 
 import pandas as pd
 
-airfoil = 'DU95W180.dat'
-data1=pd.read_csv(airfoil, header=0,
-                    names = ["alfa", "cl", "cd", "cm"],  sep='\t')
-polar_alpha = data1['alfa'][:]
-polar_cl = data1['cl'][:]
-polar_cd = data1['cd'][:]
+airfoil = "DU95W180.dat"
+data1 = pd.read_csv(airfoil, header=0, names=["alfa", "cl", "cd", "cm"], sep="\t")
+polar_alpha = data1["alfa"][:]
+polar_cl = data1["cl"][:]
+polar_cd = data1["cd"][:]
 
 
 # plot polars of the airfoil C-alfa and Cl-Cd
@@ -101,24 +117,40 @@ polar_cd = data1['cd'][:]
 # axs[1].grid()
 # plt.show()
 
+
 # define function to determine load in the blade element
 def loadBladeElement(vnorm, vtan, r_R, chord, twist, polar_alpha, polar_cl, polar_cd):
     """
     calculates the load in the blade element
     """
     vmag2 = vnorm**2 + vtan**2
-    inflowangle = np.arctan2(vnorm,vtan)
-    alpha = twist + inflowangle*180/np.pi
+    inflowangle = np.arctan2(vnorm, vtan)
+    alpha = twist + inflowangle * 180 / np.pi
     cl = np.interp(alpha, polar_alpha, polar_cl)
     cd = np.interp(alpha, polar_alpha, polar_cd)
-    lift = 0.5*vmag2*cl*chord
-    drag = 0.5*vmag2*cd*chord
-    fnorm = lift*np.cos(inflowangle)+drag*np.sin(inflowangle)
-    ftan = lift*np.sin(inflowangle)-drag*np.cos(inflowangle)
-    gamma = 0.5*np.sqrt(vmag2)*cl*chord
-    return fnorm , ftan, gamma
+    lift = 0.5 * vmag2 * cl * chord
+    drag = 0.5 * vmag2 * cd * chord
+    fnorm = lift * np.cos(inflowangle) + drag * np.sin(inflowangle)
+    ftan = lift * np.sin(inflowangle) - drag * np.cos(inflowangle)
+    gamma = 0.5 * np.sqrt(vmag2) * cl * chord
+    return fnorm, ftan, gamma, alpha, inflowangle
 
-def solveStreamtube(Uinf, r1_R, r2_R, rootradius_R, tipradius_R , Omega, Radius, NBlades, chord, twist, polar_alpha, polar_cl, polar_cd ):
+
+def solveStreamtube(
+    Uinf,
+    r1_R,
+    r2_R,
+    rootradius_R,
+    tipradius_R,
+    Omega,
+    Radius,
+    NBlades,
+    chord,
+    twist,
+    polar_alpha,
+    polar_cl,
+    polar_cd,
+):
     """
     solve balance of momentum between blade element load and loading in the streamtube
     input variables:
@@ -129,26 +161,32 @@ def solveStreamtube(Uinf, r1_R, r2_R, rootradius_R, tipradius_R , Omega, Radius,
     Omega -rotational velocity
     NBlades - number of blades in rotor
     """
-    Area = np.pi*((r2_R*Radius)**2-(r1_R*Radius)**2) #  area streamtube
-    r_R = (r1_R+r2_R)/2 # centroide
+    Area = np.pi * ((r2_R * Radius) ** 2 - (r1_R * Radius) ** 2)  #  area streamtube
+    r_R = (r1_R + r2_R) / 2  # centroide
     # initiatlize variables
-    a = 0.0 # axial induction
-    aline = 0.0 # tangential induction factor
-    
+    a = 0.0  # axial induction
+    aline = 0.0  # tangential induction factor
+
     Niterations = 100
-    Erroriterations =0.00001 # error limit for iteration rpocess, in absolute value of induction
-    
+    Erroriterations = (
+        0.00001  # error limit for iteration rpocess, in absolute value of induction
+    )
+
     for i in range(Niterations):
         # ///////////////////////////////////////////////////////////////////////
         # // this is the block "Calculate velocity and loads at blade element"
         # ///////////////////////////////////////////////////////////////////////
-        Urotor = Uinf*(1-a) # axial velocity at rotor
-        Utan = (1+aline)*Omega*r_R*Radius # tangential velocity at rotor
+        Urotor = Uinf * (1 - a)  # axial velocity at rotor
+        Utan = (1 + aline) * Omega * r_R * Radius  # tangential velocity at rotor
         # calculate loads in blade segment in 2D (N/m)
-        fnorm, ftan, gamma = loadBladeElement(Urotor, Utan, r_R,chord, twist, polar_alpha, polar_cl, polar_cd)
-        load3Daxial =fnorm*Radius*(r2_R-r1_R)*NBlades # 3D force in axial direction
+        fnorm, ftan, gamma, alpha, phi = loadBladeElement(
+            Urotor, Utan, r_R, chord, twist, polar_alpha, polar_cl, polar_cd
+        )
+        load3Daxial = (
+            fnorm * Radius * (r2_R - r1_R) * NBlades
+        )  # 3D force in axial direction
         # load3Dtan =loads[1]*Radius*(r2_R-r1_R)*NBlades # 3D force in azimuthal/tangential direction (not used here)
-      
+
         # ///////////////////////////////////////////////////////////////////////
         # //the block "Calculate velocity and loads at blade element" is done
         # ///////////////////////////////////////////////////////////////////////
@@ -156,66 +194,92 @@ def solveStreamtube(Uinf, r1_R, r2_R, rootradius_R, tipradius_R , Omega, Radius,
         # ///////////////////////////////////////////////////////////////////////
         # // this is the block "Calculate new estimate of axial and azimuthal induction"
         # ///////////////////////////////////////////////////////////////////////
-        # // calculate thrust coefficient at the streamtube 
-        CT = load3Daxial/(0.5*Area*Uinf**2)
-        
+        # // calculate thrust coefficient at the streamtube
+        CT = load3Daxial / (0.5 * Area * Uinf**2)
+
         # calculate new axial induction, accounting for Glauert's correction
-        anew =  ainduction(CT)
-        
+        anew = ainduction(CT)
+
         # correct new axial induction with Prandtl's correction
-        Prandtl, Prandtltip, Prandtlroot = PrandtlTipRootCorrection(r_R, rootradius_R, tipradius_R, Omega*Radius/Uinf, NBlades, anew);
-        print(Prandtl)
-        input()
-        if (Prandtl < 0.0001): 
-            Prandtl = 0.0001 # avoid divide by zero
-        anew = anew/Prandtl # correct estimate of axial induction
-        a = 0.75*a+0.25*anew # for improving convergence, weigh current and previous iteration of axial induction
+        Prandtl, Prandtltip, Prandtlroot = PrandtlTipRootCorrection(
+            r_R, rootradius_R, tipradius_R, Omega * Radius / Uinf, NBlades, anew
+        )
+        Prandtl = 1
+        if Prandtl < 0.0001:
+            Prandtl = 0.0001  # avoid divide by zero
+        anew = anew / Prandtl  # correct estimate of axial induction
+        a = (
+            0.75 * a + 0.25 * anew
+        )  # for improving convergence, weigh current and previous iteration of axial induction
 
         # calculate aximuthal induction
-        aline = ftan*NBlades/(2*np.pi*Uinf*(1-a)*Omega*2*(r_R*Radius)**2)
-        aline =aline/Prandtl # correct estimate of azimuthal induction with Prandtl's correction
+        aline = (
+            ftan
+            * NBlades
+            / (2 * np.pi * Uinf * (1 - a) * Omega * 2 * (r_R * Radius) ** 2)
+        )
+        aline = (
+            aline / Prandtl
+        )  # correct estimate of azimuthal induction with Prandtl's correction
         # ///////////////////////////////////////////////////////////////////////////
         # // end of the block "Calculate new estimate of axial and azimuthal induction"
         # ///////////////////////////////////////////////////////////////////////
-        
-        #// test convergence of solution, by checking convergence of axial induction
-        if (np.abs(a-anew) < Erroriterations): 
+
+        # // test convergence of solution, by checking convergence of axial induction
+        if np.abs(a - anew) < Erroriterations:
             # print("iterations")
             # print(i)
             break
 
-    return [a , aline, r_R, fnorm , ftan, gamma]
+    return [a, aline, r_R, fnorm, ftan, gamma, alpha, phi]
+
 
 # define the blade geometry
-delta_r_R = .01
-r_R = np.arange(0.2, 1+delta_r_R/2, delta_r_R)
+delta_r_R = 0.01
+r_R = np.arange(0.2, 1 + delta_r_R / 2, delta_r_R)
 
 
 # blade shape
-pitch = 2 # degrees
-chord_distribution = 3*(1-r_R)+1 # meters
-twist_distribution = -14*(1-r_R)+pitch # degrees
-
+pitch = 2  # degrees
+chord_distribution = 3 * (1 - r_R) + 1  # meters
+twist_distribution = -14 * (1 - r_R) + pitch  # degrees
 
 
 # define flow conditions
-Uinf = 1 # unperturbed wind speed in m/s
-TSR = 8 # tip speed ratio
+Uinf = 1  # unperturbed wind speed in m/s
+TSR = 8  # tip speed ratio
 Radius = 50
-Omega = Uinf*TSR/Radius
+Omega = Uinf * TSR / Radius
 NBlades = 3
 
-TipLocation_R =  1
-RootLocation_R =  0.2
+TipLocation_R = 1
+RootLocation_R = 0.2
 
 
 # solve BEM model
 
 
-results =np.zeros([len(r_R)-1,6]) 
+results = np.zeros([len(r_R) - 1, 8])
 
-for i in range(len(r_R)-1):
-    chord = np.interp((r_R[i]+r_R[i+1])/2, r_R, chord_distribution)
-    twist = np.interp((r_R[i]+r_R[i+1])/2, r_R, twist_distribution)
-    
-    results[i,:] = solveStreamtube(Uinf, r_R[i], r_R[i+1], RootLocation_R, TipLocation_R , Omega, Radius, NBlades, chord, twist, polar_alpha, polar_cl, polar_cd )
+for i in tqdm(range(len(r_R) - 1)):
+    chord = np.interp((r_R[i] + r_R[i + 1]) / 2, r_R, chord_distribution)
+    twist = np.interp((r_R[i] + r_R[i + 1]) / 2, r_R, twist_distribution)
+
+    results[i, :] = solveStreamtube(
+        Uinf,
+        r_R[i],
+        r_R[i + 1],
+        RootLocation_R,
+        TipLocation_R,
+        Omega,
+        Radius,
+        NBlades,
+        chord,
+        twist,
+        polar_alpha,
+        polar_cl,
+        polar_cd,
+    )
+
+plt.plot(results[:, 2], results[:, 3], "b")
+plt.show()
