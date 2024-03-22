@@ -6,6 +6,14 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 
 
+def cosspace(start: float, stop: float, n: int) -> np.ndarray[Any]:
+    midpoint: float = (stop - start) / 2
+    n_array: np.ndarray = np.arange(0, n, 1)
+
+    return start + midpoint * (1 - np.cos(np.pi / (n - 1) * n_array))
+
+
+
 class Airfoil:
     def __init__(self, polar_file: str):
         self.filename = polar_file
@@ -79,7 +87,8 @@ class Turbine:
         radius: float,
         tipradius_R: float,
         rootradius_R: float,
-        delta_r_R: float,
+        n_annuli: float,
+        spacing="constant",
     ):
         self.turbine_blade = turbine_blade
         self.B = NBlades
@@ -87,8 +96,17 @@ class Turbine:
         self.radius = radius
         self.tipradius_R = tipradius_R
         self.rootradius_R = rootradius_R
-        self.dr = delta_r_R
-        self.r_Rs = np.arange(RootLocation_R, TipLocation_R + delta_r_R / 2, delta_r_R)
+
+        if spacing == "constant":
+            self.r_Rs: np.ndarray = np.linspace(
+                RootLocation_R, TipLocation_R, n_annuli + 1
+            )
+        elif spacing == "cosine":
+            self.r_Rs: np.ndarray = cosspace(
+                RootLocation_R, TipLocation_R, n_annuli + 1
+            )
+
+        self.dr = self.r_Rs[1:] - self.r_Rs[:-1]
 
 
 class BemSimulation:
@@ -111,7 +129,7 @@ class BemSimulation:
         self.tsr = tsr
         self.omega = uinf * tsr / self.turbine.radius
         self.rho = rho
-        self.pinf=p_inf
+        self.pinf = p_inf
         self.tip_corr = tip_correction
         self.glauert_corr = glauert_correction
         self.n_iter = n_iterations
@@ -222,16 +240,18 @@ class BemSimulation:
             load_tan: float = (
                 ftan * self.turbine.radius * (r2_R - r1_R) * self.turbine.B
             )
-            power: float = load_axial*urotor 
+            power: float = load_axial * urotor
 
-            
             CT: float = load_axial / (0.5 * area * self.rho * self.uinf**2)
-            Cn: float = load_axial/(0.5*self.rho*self.uinf**2*self.turbine.radius)
-            Ct: float = load_tan / (0.5 * self.rho * self.uinf**2*self.turbine.radius)
-            Cp: float = power/(0.5*self.rho*self.uinf**3*area)
-            CQ: float = Cp/self.tsr
-            
-            
+            Cn: float = load_axial / (
+                0.5 * self.rho * self.uinf**2 * self.turbine.radius
+            )
+            Ct: float = load_tan / (
+                0.5 * self.rho * self.uinf**2 * self.turbine.radius
+            )
+            Cp: float = power / (0.5 * self.rho * self.uinf**3 * area)
+            CQ: float = Cp / self.tsr
+
             anew: float = self.calc_axial_induction(CT)
 
             if self.tip_corr:
@@ -262,7 +282,7 @@ class BemSimulation:
                         phi,
                         cl,
                         CT,
-                        Cn, 
+                        Cn,
                         Ct,
                         CQ,
                         Cp,
@@ -272,6 +292,7 @@ class BemSimulation:
                         prandtltip,
                         prandtlroot,
                     ]
+                    
                 else:
                     return [
                         a,
@@ -289,7 +310,7 @@ class BemSimulation:
                         CQ,
                         Cp,
                         load_axial,
-                        area
+                        area,
                     ]
 
     def simulate(self) -> np.ndarray:
@@ -369,7 +390,7 @@ class BemSimulation:
         if save:
             plt.savefig(name)
         plt.show()
-    
+
     def plot_thrust_torque_loading_coef(self, name="", save=False) -> None:
         fig = plt.figure(figsize=(8, 8))
         plt.plot(self.results[:, 2], self.results[:, 10], "r-", label=r"$C_n$")
@@ -381,8 +402,7 @@ class BemSimulation:
         if save:
             plt.savefig(name)
         plt.show()
-        
-   
+
     def plot_normal_azimuthal_loading_coef(self, name="", save=False) -> None:
         fig = plt.figure(figsize=(8, 8))
         plt.plot(self.results[:, 2], self.results[:, 10], "r-", label=r"$C_n$")
@@ -394,8 +414,7 @@ class BemSimulation:
         if save:
             plt.savefig(name)
         plt.show()
-   
-    
+
     def plot_normal_azimuthal_loading_coef(self, name="", save=False) -> None:
         fig = plt.figure(figsize=(8, 8))
         plt.plot(self.results[:, 2], self.results[:, 10], "r-", label=r"$C_n$")
@@ -407,8 +426,7 @@ class BemSimulation:
         if save:
             plt.savefig(name)
         plt.show()
-    
-        
+
     def plot_normal_azimuthal_loading_coef(self, name="", save=False) -> None:
         fig = plt.figure(figsize=(8, 8))
         plt.plot(self.results[:, 2], self.results[:, 9], "r-", label=r"$C_T$")
@@ -420,7 +438,7 @@ class BemSimulation:
         if save:
             plt.savefig(name)
         plt.show()
-        
+
     def plot_norm_tan_loading(self, name="", save=False) -> None:
         fig = plt.figure(figsize=(8, 8))
         plt.plot(self.results[:, 2], self.results[:, 3], "r-", label=r"Axial")
@@ -444,24 +462,69 @@ class BemSimulation:
         if save:
             plt.savefig(name)
         plt.show()
-        
+
     def plot_stag_press(self, name="", save=False) -> None:
-        u_downwind: np.ndarray = self.uinf*(1-2*self.results[:, 0])
-        u_rotor_downwind: np.ndarray = self.uinf*(1-self.results[:, 0]) 
-        
-        p_stag_upwind: np.ndarray = self.pinf + 0.5*self.rho*self.uinf*np.ones(shape = self.results[:, 2].shape)
-        p_stag_rotor_upwind: np.ndarray = self.pinf + 0.5*self.rho*self.uinf*np.ones(shape = self.results[:, 2].shape)
+        uaxial_rotor: np.ndarray = self.uinf * (1 - self.results[:, 0])
+        utan_rotor: np.ndarray = (
+            (1 + self.results[:, 1])
+            * self.omega
+            * self.results[:, 2]
+            * self.turbine.radius
+        )
+        wrotor2: np.ndarray = uaxial_rotor**2 + utan_rotor**2
+
+        uaxial_downwind: np.ndarray = self.uinf * (1 - 2 * self.results[:, 0])
+        utan_downwind: np.ndarray = (
+            (1 + 2 * self.results[:, 1])
+            * self.omega
+            * self.results[:, 2]
+            * self.turbine.radius
+        )
+        wdownwind2: np.ndarray = uaxial_downwind**2 + utan_downwind**2
+
+        p2: np.ndarray = self.pinf + 0.5 * self.rho * (
+            self.uinf**2 - uaxial_rotor**2
+        )
+        delta_p: np.ndarray = 0.5 * self.rho * (self.uinf**2 - uaxial_downwind**2)
+
+        p_stag_upwind: np.ndarray = self.pinf + 0.5 * self.rho * self.uinf**2 * np.ones(
+            shape=self.results[:, 2].shape
+        )
+        p_stag_rotor_upwind: np.ndarray = p2 + 0.5 * self.rho * uaxial_rotor**2
         # p_stag_rotor_downwind: np.ndarray = (self.pinf - 0.5*self.results[:, 13]/self.results[:, 14]) + 0.5*self.rho*u_rotor_downwind**2
-        p_stag_rotor_downwind: np.ndarray = self.pinf +0.5*self.rho*self.uinf**2*self.results[:, 0]*(3*self.results[:, 0]-2) + 0.5*self.rho*u_rotor_downwind**2
-        p_stag_downwind: np.ndarray = self.pinf + 0.5*self.rho*u_downwind**2
-        
-        plt.plot(self.results[:, 2], p_stag_upwind, "r-", label="Infinity Upwind")
-        plt.plot(self.results[:, 2], p_stag_rotor_upwind, "g--", label="Rotor Upwind")
-        plt.plot(self.results[:, 2], p_stag_rotor_downwind, "b-.", label="Rotor Downwind")
-        plt.plot(self.results[:, 2], p_stag_downwind, "k.", label="Infinity Downwind")
+        p_stag_rotor_downwind: np.ndarray = (
+            p2 - delta_p
+        ) + 0.5 * self.rho * uaxial_rotor**2
+        p_stag_downwind: np.ndarray = self.pinf + 0.5 * self.rho * uaxial_downwind**2
+
+        plt.plot(
+            self.results[:, 2],
+            p_stag_upwind / p_stag_upwind,
+            "r-",
+            label="Infinity Upwind",
+        )
+        plt.plot(
+            self.results[:, 2],
+            p_stag_rotor_upwind / p_stag_upwind,
+            "g--",
+            label="Rotor Upwind",
+        )
+        plt.plot(
+            self.results[:, 2],
+            p_stag_rotor_downwind / p_stag_upwind,
+            "b-.",
+            label="Rotor Downwind",
+        )
+        plt.plot(
+            self.results[:, 2],
+            p_stag_downwind / p_stag_upwind,
+            "k.",
+            label="Infinity Downwind",
+        )
+        plt.ticklabel_format(useOffset=False)
         plt.grid(True)
         plt.xlabel("r/R")
-        plt.ylabel(r"$p_{0}$")
+        plt.ylabel(r"$p_{0}$ [Pa]")
         plt.legend()
         if save:
             plt.savefig()
@@ -469,10 +532,11 @@ class BemSimulation:
 
 
 if __name__ == "__main__":
-    delta_r_R = 0.01
+    # n_ann: int = 80
+    n_arr: np.ndarray = np.arange(10, 101, 1) 
     TipLocation_R = 1
     RootLocation_R = 0.2
-
+    
     pitch = 2
 
     def chord_dist(x):
@@ -482,115 +546,75 @@ if __name__ == "__main__":
         return -14 * (1 - x)
 
     tsr_list: np.ndarray = np.array([8])
-    thrust_list: list = []
-    torque_list: list = []
 
+    # y_dir: dict = {"tsr6": [], "tsr8": [], "tsr10": []}
+    # r_R = 0
+    
+    thrust_const: np.ndarray = np.zeros(shape=n_arr.shape)
+    thrust_cos: np.ndarray = np.zeros(shape=n_arr.shape)
+    
+    spacing_array: list = ["constant", "cosine"] 
+    
     airfoil = Airfoil("DU95W180.dat")
     blade = Blade(airfoil, twist_dist, chord_dist)
 
     for i in tqdm(range(len(tsr_list))):
-        Uinf = 10
-        TSR = tsr_list[i]
-        Radius = 50
-        Nblades = 3
+        for j in tqdm(range(len(spacing_array)), desc="LOOPING OVER SPACING METHODS"):
+            for k in tqdm(range(len(n_arr)), desc="LOOPING OVER ANNULI"):
+                Uinf = 10
+                TSR = 8
+                Radius = 50
+                Nblades = 3
+                
+                spacing: str = spacing_array[j]
+                N: int = n_arr[k]
 
-        turbine = Turbine(
-            blade, Nblades, pitch, Radius, TipLocation_R, RootLocation_R, 0.01
-        )
-        sim = BemSimulation(turbine, Uinf, TSR, 1, 0, True, True)
-        sim_uncorr = BemSimulation(turbine, Uinf, TSR, 1, 0, False, True)
+                turbine = Turbine(
+                    blade,
+                    Nblades,
+                    pitch,
+                    Radius,
+                    TipLocation_R,
+                    RootLocation_R,
+                    N,
+                    spacing,
+                )
+                sim = BemSimulation(turbine, Uinf, TSR, 1, 101325, True, True)
+                
+                results: np.ndarray = sim.simulate()
+                
+                if spacing == "constant":
+                    thrust_const[k] = sim.calc_perf()[0]
+                elif spacing == "cosine":
+                    thrust_cos[k] = sim.calc_perf()[0]
+                
+                # sim_uncorr = BemSimulation(turbine, Uinf, TSR, 1, 101325, False, True)
 
-        results: np.ndarray = sim.simulate()
-        results_uncorr: np.ndarray = sim_uncorr.simulate()
-        # thrust: float = np.sum(results[:, 3] * delta_r_R * Radius)
-        # torque: float = np.sum(results[:, 4] * results[:, 2] * Radius)
-        # print(f"Thrust = {thrust}")
-        # print(f"Torque = {torque}")
-        thrust, torque = sim.calc_thrust_torque()
-        thrust_list.append(thrust)
-        torque_list.append(torque)
-        CT, CP = sim.calc_perf()
-        print(f"TSR {tsr_list[i]}")
-        print("CT is ", CT)
-        print("CP is ", CP)
+                # results: np.ndarray = sim.simulate()
+                # r_R = results[:, 2]
+                # y_dir[f"tsr{tsr_list[i]}"] = results[:, 13]
+                # results_uncorr: np.ndarray = sim_uncorr.simulate()
 
-        thrust_unc, torque_unc = sim_uncorr.calc_thrust_torque()
-        CT_unc, CP_unc = sim_uncorr.calc_perf()
-        print("CT uncorrected = ", CT_unc)
-        print("CP uncorrected = ", CP_unc)
-        # fig = plt.figure(figsize=(8, 8))
-        # plt.plot(results[:, 2], results[:, 0], "r-", label=r"$a_{corr}$")
-        # plt.plot(results[:, 2], results[:, 1], "b--", label=r"$a'_{corr}$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 0], "g-.", label=r"$a_{unc}$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 1], "k.", label=r"$a'_{unc}$")
-        # plt.grid(True)
-        # plt.xlabel("r/R")
-        # plt.ylabel(r"$a$, $a'$")
-        # plt.legend()
-        # plt.show()
-        # plt.plot(results[:, 2], results[:, 12])
-        # plt.show()
-
-        # fig = plt.figure(figsize=(8, 8))
-        # plt.plot(results[:, 2], results[:, 3], "r-", label=r"$f_{axial, corr}$")
-        # plt.plot(results[:, 2], results[:, 4], "b--", label=r"$f_{azim, corr}$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 3], "g-.", label=r"$f_{axial, unc}$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 4], "k.", label=r"$f_{azim, unc}$")
-        # plt.grid(True)
-        # plt.xlabel("r/R")
-        # plt.ylabel(r"$f_{axial}$, $f_{azim}$")
-        # plt.legend()
-        # plt.show()
-
-        # fig = plt.figure(figsize=(8, 8))
-        # plt.plot(results[:, 2], results[:, 9], "r-", label=r"$C_{T, corr}$")
-        # plt.plot(results[:, 2], results[:, 10], "b--", label=r"$C_{N, corr}$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 9], "g-.", label=r"$C_{T, unc}$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 10], "k.", label=r"$C_{N, unc}$")
-        # plt.plot(results[:, 2], results[:, 11], "g-.", label=r"$C_{T, unc}$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 11], "k.", label=r"$C_{N, unc}$")
-        # plt.grid(True)
-        # plt.xlabel("r/R")
-        # plt.ylabel(r"$C_{T}$, $C_{N}$")
-        # plt.legend()
-        # plt.show()
-
-        # fig = plt.figure(figsize=(8, 8))
-        # plt.plot(results[:, 2], results[:, 6], "r-", label=r"$\alpha_{corr}$")
-        # plt.plot(results[:, 2], results[:, 7]*10, "b--", label=r"$\phi_{corr} \times 10$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 6], "g-.", label=r"$\alpha_{unc}$")
-        # plt.plot(results_uncorr[:, 2], results_uncorr[:, 7]*10, "k.", label=r"$\phi_{unc} \times 10$")
-        # plt.grid(True)
-        # plt.xlabel("r/R")
-        # plt.ylabel(r"$\alpha$, $\phi$ [deg]")
-        # plt.legend()
-        # plt.show()
-        fig = plt.figure(figsize=(8, 8)) 
-        r: np.ndarray = np.arange(RootLocation_R, TipLocation_R + delta_r_R/2, delta_r_R)
-        chord: np.ndarray = chord_dist(r)
-        plt.plot(r, chord, "r-", label="Chord") 
-        plt.plot(results[:, 2], results[:, 8], "g--", label=r"$C_{l}$")
-        plt.plot(results[:, 2], results[:, 8]*chord[:-1], "b-.", label=r"$c \times C_{l}$")
-        plt.grid(True)
-        plt.xlabel("r/R")
-        plt.ylabel(r"c, $C_{l}$")
+                # sim.plot_flow_angles()
+                # sim.plot_induction_factors()
+                # sim.plot_prandtl_corr()
+                # sim.plot_normal_azimuthal_loading_coef()
+                # sim.plot_thrust_torque_loading_coef()
+                # sim.plot_norm_tan_loading()
+                # sim.plot_stag_press()
+                
+        plt.plot(n_arr, thrust_const, "r-", label = "Constant")       
+        plt.plot(n_arr, thrust_cos, "g--", label = "Cosine")
+        plt.grid(visible=True, which="both")
         plt.legend()
         plt.show()
-        
-        # sim.plot_flow_angles()
-        # sim.plot_induction_factors()
-        # sim.plot_prandtl_corr()
-        # sim.plot_normal_azimuthal_loading_coef()
-        # sim.plot_thrust_torque_loading_coef()
-        # sim.plot_norm_tan_loading()
-        # sim.plot_stag_press()
-    # fig4 = plt.figure(figsize=(8, 8))
-    # plt.title("Total thrust and torque")
-    # plt.plot(tsr_list, thrust_list, "r-", label = "Thrust")
-    # plt.plot(tsr_list, torque_list, "g--", label="Torque")
-    # plt.grid(True)
-    # plt.xlabel("TSR")
-    # plt.ylabel("Total loading")
-    # plt.legend()
-    # plt.show()
-    # plt.show()
+
+        # plt.figure(figsize=(8, 8))
+        # plt.plot(r_R, y_dir["tsr6"], "r-", label="TSR = 6")
+        # plt.plot(r_R, y_dir["tsr8"], "g--", label="TSR = 8")
+        # plt.plot(r_R, y_dir["tsr10"], "b-.", label="TSR = 10")
+        # plt.xlabel("r/R")
+        # plt.ylabel(r"$C_{p}$")
+        # plt.grid(True)
+        # plt.legend()
+        # plt.show()
