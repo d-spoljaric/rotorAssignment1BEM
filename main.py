@@ -4,6 +4,9 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import warnings
+
+warnings.filterwarnings("error")
 
 
 def cosspace(start: float, stop: float, n: int) -> np.ndarray[Any]:
@@ -11,6 +14,7 @@ def cosspace(start: float, stop: float, n: int) -> np.ndarray[Any]:
     n_array: np.ndarray = np.arange(0, n, 1)
 
     return start + midpoint * (1 - np.cos(np.pi / (n - 1) * n_array))
+
 
 
 
@@ -96,6 +100,7 @@ class Turbine:
         self.radius = radius
         self.tipradius_R = tipradius_R
         self.rootradius_R = rootradius_R
+        self.n_annuli = n_annuli
 
         if spacing == "constant":
             self.r_Rs: np.ndarray = np.linspace(
@@ -188,13 +193,16 @@ class BemSimulation:
     def _prandtl_tip_root_correction(
         self, r_R: float, ax_ind: float
     ) -> Tuple[float, float, float]:
-        temp1 = (
-            -self.turbine.B
-            / 2
-            * (self.turbine.tipradius_R - r_R)
-            / r_R
-            * np.sqrt(1 + ((self.tsr * r_R) ** 2) / ((1 - ax_ind) ** 2))
-        )
+        try:
+            temp1 = (
+                -self.turbine.B
+                / 2
+                * (self.turbine.tipradius_R - r_R)
+                / r_R
+                * np.sqrt(1 + ((self.tsr * r_R) ** 2) / ((1 - ax_ind) ** 2))
+            )
+        except RuntimeWarning: 
+            print(f"a = {ax_ind}, r_R = {r_R}")
         Ftip = np.array(2 / np.pi * np.arccos(np.exp(temp1)))
         Ftip[np.isnan(Ftip)] = 0
         temp1 = (
@@ -221,9 +229,11 @@ class BemSimulation:
             (r2_R * self.turbine.radius) ** 2 - (r1_R * self.turbine.radius) ** 2
         )
         r_R: float = (r1_R + r2_R) / 2
-
-        a: float = 0.0
-        aprime: float = 0.0
+        
+        alim: float = 0.95
+        
+        a: float = 0.2
+        aprime: float = 0.02
 
         solving: bool = True
 
@@ -240,8 +250,12 @@ class BemSimulation:
             load_tan: float = (
                 ftan * self.turbine.radius * (r2_R - r1_R) * self.turbine.B
             )
-            power: float = load_axial * urotor
-
+            
+            try:
+                power: float = load_axial * urotor
+            except RuntimeWarning:
+                print(load_axial)
+            
             CT: float = load_axial / (0.5 * area * self.rho * self.uinf**2)
             Cn: float = load_axial / (
                 0.5 * self.rho * self.uinf**2 * self.turbine.radius
@@ -261,11 +275,18 @@ class BemSimulation:
                 anew: float = anew / prandtl
 
             a: float = 0.75 * a + 0.25 * anew
+            
+            if a>alim or np.isnan(anew):
+                a = alim
 
             aprime: float = self.calc_azimuthal_induction(ftan, a, r_R)
 
             if self.tip_corr:
                 aprime: float = aprime / prandtl
+    
+            if np.isnan(ftan):
+                ftan = 0
+                fnorm = 0
 
             iterations += 1
 
@@ -462,6 +483,19 @@ class BemSimulation:
         if save:
             plt.savefig(name)
         plt.show()
+    
+    def plot_cl_c(self, name="", save=False) -> None:
+        fig = plt.figure(figsize=(8, 8))
+        plt.plot(self.results[:, 2], self.results[:, 8], "r-", label=r"$C_{l}$")
+        plt.plot(self.results[:, 2], self.blade.chord(results[:, 2]), "g--", label=r"$c$")
+        plt.plot(self.results[:, 2], self.blade.chord(results[:, 2]) * self.results[:, 8], "b-.", label=r"$C_{l} \times c$")
+        plt.grid(True)
+        plt.xlabel("r/R")
+        plt.ylabel(r"$C_{l}$, c")
+        plt.legend()
+        if save:
+            plt.savefig(name)
+        plt.show()
 
     def plot_stag_press(self, name="", save=False) -> None:
         uaxial_rotor: np.ndarray = self.uinf * (1 - self.results[:, 0])
@@ -533,7 +567,8 @@ class BemSimulation:
 
 if __name__ == "__main__":
     # n_ann: int = 80
-    n_arr: np.ndarray = np.arange(10, 101, 1) 
+    # n_arr: np.ndarray = np.arange(10, 101, 1) 
+    n_arr: np.ndarray = np.array([80])
     TipLocation_R = 1
     RootLocation_R = 0.2
     
@@ -553,14 +588,14 @@ if __name__ == "__main__":
     thrust_const: np.ndarray = np.zeros(shape=n_arr.shape)
     thrust_cos: np.ndarray = np.zeros(shape=n_arr.shape)
     
-    spacing_array: list = ["constant", "cosine"] 
+    spacing_array: list = ["constant"] 
     
     airfoil = Airfoil("DU95W180.dat")
     blade = Blade(airfoil, twist_dist, chord_dist)
 
-    for i in tqdm(range(len(tsr_list))):
-        for j in tqdm(range(len(spacing_array)), desc="LOOPING OVER SPACING METHODS"):
-            for k in tqdm(range(len(n_arr)), desc="LOOPING OVER ANNULI"):
+    for i in (range(len(tsr_list))):
+        for j in range(len(spacing_array)): #, desc="LOOPING OVER SPACING METHODS"):
+            for k in range(len(n_arr)): #, desc="LOOPING OVER ANNULI"):
                 Uinf = 10
                 TSR = 8
                 Radius = 50
@@ -579,14 +614,14 @@ if __name__ == "__main__":
                     N,
                     spacing,
                 )
-                sim = BemSimulation(turbine, Uinf, TSR, 1, 101325, True, True)
+                sim = BemSimulation(turbine, Uinf, TSR, 1, 101325, True, True, 300)
                 
                 results: np.ndarray = sim.simulate()
                 
-                if spacing == "constant":
-                    thrust_const[k] = sim.calc_perf()[0]
-                elif spacing == "cosine":
-                    thrust_cos[k] = sim.calc_perf()[0]
+                # if spacing == "constant":
+                #     thrust_const[k] = sim.calc_perf()[0]
+                # elif spacing == "cosine":
+                #     thrust_cos[k] = sim.calc_perf()[0]
                 
                 # sim_uncorr = BemSimulation(turbine, Uinf, TSR, 1, 101325, False, True)
 
@@ -602,12 +637,13 @@ if __name__ == "__main__":
                 # sim.plot_thrust_torque_loading_coef()
                 # sim.plot_norm_tan_loading()
                 # sim.plot_stag_press()
-                
-        plt.plot(n_arr, thrust_const, "r-", label = "Constant")       
-        plt.plot(n_arr, thrust_cos, "g--", label = "Cosine")
-        plt.grid(visible=True, which="both")
-        plt.legend()
-        plt.show()
+                sim.plot_cl_c()
+                 
+        # plt.plot(n_arr, thrust_const, "r-", label = "Constant")       
+        # plt.plot(n_arr, thrust_cos, "g--", label = "Cosine")
+        # plt.grid(visible=True, which="both")
+        # plt.legend()
+        # plt.show()
 
         # plt.figure(figsize=(8, 8))
         # plt.plot(r_R, y_dir["tsr6"], "r-", label="TSR = 6")
